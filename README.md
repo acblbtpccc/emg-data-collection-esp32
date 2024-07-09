@@ -2,7 +2,7 @@
 
 ## Using Arduino IDE
 
-  cp folder to ~/Arduino/
+  cp folder to ~/Arduino/ 
   compile and run
 
 ## Using PlatformIO IDE
