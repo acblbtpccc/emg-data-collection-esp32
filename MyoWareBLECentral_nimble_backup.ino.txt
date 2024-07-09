@@ -1,0 +1,149 @@
+#include <NimBLEDevice.h>
+#include <NimBLEUtils.h>
+#include <NimBLEServer.h>
+#include <NimBLEClient.h>
+#include <MyoWare.h>
+#include <vector>
+
+// debug parameters
+const bool debugLogging = false; // set to true for verbose logging to serial
+
+std::vector<BLEAddress> vecMyoWareShields;
+std::vector<BLEClient*> vecMyoWareClients;
+
+// MyoWare class object
+MyoWare myoware;
+
+// UUIDs for the MyoWare service and characteristic
+const char *myoWareServiceUUID = "EC3AF789-2154-49F4-A9FC-BC6C88E9E930";
+const char *myoWareCharacteristicUUID = "F3A56EDF-8F1E-4533-93BF-5601B2E91308";
+
+// Function to read BLE data (stub for illustration)
+double ReadBLEData(BLERemoteCharacteristic* pRemoteCharacteristic) {
+  String value = pRemoteCharacteristic->readValue();  // Use String type
+  return value.toFloat();  // Convert String to float
+}
+
+// Function to print peripheral info (stub for illustration)
+void PrintPeripheralInfo(BLEClient* client) {
+  Serial.print("Peripheral: ");
+  Serial.println(client->getPeerAddress().toString().c_str());
+}
+
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(BLEUUID(myoWareServiceUUID))) {
+      if (debugLogging) {
+        Serial.print("Found MyoWare Wireless Shield: ");
+        Serial.println(advertisedDevice.toString().c_str());
+      }
+
+      // Add device to the vector
+      vecMyoWareShields.push_back(advertisedDevice.getAddress());
+      if (debugLogging) {
+        Serial.print("Found MyoWare Wireless Shield: ");
+        Serial.println(advertisedDevice.getAddress().toString().c_str());
+        }
+      }
+  }
+};
+
+
+
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+
+  pinMode(myoware.getStatusLEDPin(), OUTPUT); // initialize the built-in LED pin to indicate when a central is connected
+
+  // begin initialization
+  BLEDevice::init("");  // 初始化 BLE 设备
+
+  if (debugLogging) {
+    Serial.println("MyoWare BLE Central");
+    Serial.println("-------------------");
+  }
+
+  // start scanning for MyoWare Wireless Shields
+  if (debugLogging) {
+    Serial.print("Scanning for MyoWare Wireless Shields: ");
+    Serial.println(myoWareServiceUUID);
+  }
+
+  BLEScan *pBLEScan = BLEDevice::getScan(); // 创建新扫描对象
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);  // 设置扫描回调
+  pBLEScan->setActiveScan(true); // active scan uses more power, but gets results faster
+  pBLEScan->start(10, false); // scan for 10 seconds
+
+  if (vecMyoWareShields.empty()) {
+    Serial.println("No MyoWare Wireless Shields found!");
+    while (1);
+  }
+
+
+
+   for (auto& address : vecMyoWareShields) {
+    BLEClient* shield = BLEDevice::createClient();
+    if (!shield->connect(address)) {
+      Serial.print("Failed to connect to MyoWare Wireless Shield with address: ");
+      Serial.println(address.toString().c_str());
+      delete shield;
+      continue;
+    }
+
+    if (debugLogging) {
+      Serial.print("Connected to ");
+      PrintPeripheralInfo(shield);
+    }
+
+    vecMyoWareClients.push_back(shield);
+  }
+
+  digitalWrite(myoware.getStatusLEDPin(), HIGH);  // Turn on the LED to indicate a connection
+
+}
+
+void loop() {
+  for (auto &shield : vecMyoWareClients) {
+    if (debugLogging) {
+      Serial.print("Updating ");
+      PrintPeripheralInfo(shield);
+    }
+
+    if (!shield->isConnected()) {
+      // output zero if the Wireless shield gets disconnected
+      // this ensures data capture can continue for the 
+      // other shields that are connected
+      Serial.print("0.0"); 
+      Serial.print("\t"); 
+      delete shield;
+      continue;
+    }
+
+    BLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
+    if (!myoWareService) {
+      Serial.println("Failed finding MyoWare BLE Service!");
+      shield->disconnect();
+      delete shield;
+      continue;
+    }
+
+    // get sensor data
+    BLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
+    if (!sensorCharacteristic) {
+      Serial.println("Failed to find characteristic!");
+      shield->disconnect();
+      delete shield;
+      continue;
+    }
+
+    const double sensorValue = ReadBLEData(sensorCharacteristic);
+    Serial.print(sensorValue);
+
+    if (vecMyoWareShields.size() > 1)
+      Serial.print(","); 
+
+  }
+  Serial.println("");
+}
