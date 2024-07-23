@@ -4,9 +4,14 @@
 #include <NimBLEClient.h>
 #include <MyoWare.h>
 #include <vector>
+#include <ArduinoJson.h>
+#include <WiFi.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <TimeLib.h> // To help with time formatting
 
-// debug parameters
-const bool debugLogging = false; // set to true for verbose logging to serial
+// Debug parameters
+const bool debugLogging = false; // Set to true for verbose logging to serial
 
 std::vector<NimBLEAddress> vecMyoWareShields;
 std::vector<NimBLEClient*> vecMyoWareClients;
@@ -18,10 +23,22 @@ MyoWare myoware;
 const char *myoWareServiceUUID = "EC3AF789-2154-49F4-A9FC-BC6C88E9E930";
 const char *myoWareCharacteristicUUID = "F3A56EDF-8F1E-4533-93BF-5601B2E91308";
 
-// Function to read BLE data (stub for illustration)
-double ReadBLEData(BLERemoteCharacteristic* pRemoteCharacteristic) {
-  String value = pRemoteCharacteristic->readValue();  // Use String type
-  return value.toFloat();  // Convert String to float
+// JSON document for storing notifications
+StaticJsonDocument<1024> doc;
+
+// WiFi credentials
+const char* ssid = "boluo-wifi";
+const char* password = "54448449";
+
+// NTP client setup
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "ntp1.aliyun.com", 8 * 3600, 60000); // UTC+8 for Hong Kong and update every 60 seconds
+
+// Function to format the date and time
+String getFormattedDateTime() {
+  time_t rawTime = timeClient.getEpochTime();
+  return String(year(rawTime)) + "-" + String(month(rawTime)) + "-" + String(day(rawTime)) + " " +
+         String(hour(rawTime)) + ":" + String(minute(rawTime)) + ":" + String(second(rawTime));
 }
 
 // Function to print peripheral info (stub for illustration)
@@ -30,25 +47,25 @@ void PrintPeripheralInfo(NimBLEClient* client) {
   Serial.println(client->getPeerAddress().toString().c_str());
 }
 
+// Notification callback function
+void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic,
+                    uint8_t* pData, size_t length, bool isNotify) {
+  String address = pBLERemoteCharacteristic->getRemoteService()->getClient()->getPeerAddress().toString().c_str();
+  double sensorValue = atof((char*)pData);
 
-// BLE version
-// class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
-//   void onResult(BLEAdvertisedDevice advertisedDevice) {
-//     if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(NimBLEUUID(myoWareServiceUUID))) {
-//       if (debugLogging) {
-//         Serial.print("Found MyoWare Wireless Shield: ");
-//         Serial.println(advertisedDevice.toString().c_str());
-//       }
+  // Add data to JSON document
+  JsonObject peripheral = doc.createNestedObject();
+  peripheral["mac"] = address;
+  peripheral["value"] = sensorValue;
+  peripheral["timestamp"] = getFormattedDateTime();
 
-//       // Add device to the vector
-//       vecMyoWareShields.push_back(advertisedDevice.getAddress());
-//       if (debugLogging) {
-//         Serial.print("Found MyoWare Wireless Shield: ");
-//         Serial.println(advertisedDevice.getAddress().toString().c_str());
-//         }
-//       }
-//   }
-// };
+  // Serialize JSON document to Serial
+  serializeJson(doc, Serial);
+  Serial.println(""); // Print newline to separate JSON objects
+
+  // Clear the document for the next notification
+  doc.clear();
+}
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice* advertisedDevice) {
@@ -66,45 +83,74 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
-
 void setup() {
   Serial.begin(115200);
   while (!Serial);
 
-  pinMode(myoware.getStatusLEDPin(), OUTPUT); // initialize the built-in LED pin to indicate when a central is connected
+  pinMode(myoware.getStatusLEDPin(), OUTPUT); // Initialize the built-in LED pin to indicate when a central is connected
 
-  // begin initialization
-  NimBLEDevice::init("");  // 初始化 BLE 设备
+  // Scan for available Wi-Fi networks
+  Serial.println("Scanning for available WiFi networks...");
+  int n = WiFi.scanNetworks();
+  if (n == 0) {
+    Serial.println("No networks found.");
+  } else {
+    Serial.printf("%d networks found:\n", n);
+    for (int i = 0; i < n; ++i) {
+      Serial.printf("%d: %s (%d) %s\n", i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "encrypted");
+    }
+  }
+
+  // Connect to Wi-Fi
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  int wifi_attempts = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    wifi_attempts++;
+    if (wifi_attempts > 20) { // After 20 attempts (~10 seconds), break and print an error message
+      Serial.println("\nFailed to connect to WiFi!");
+      return; // Optional: you might want to handle reconnection attempts here
+    }
+  }
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Start NTP client
+  timeClient.begin();
+  timeClient.update();
+
+  // Begin initialization
+  NimBLEDevice::init("");  // Initialize BLE device
 
   if (debugLogging) {
     Serial.println("MyoWare BLE Central");
     Serial.println("-------------------");
   }
 
-  // start scanning for MyoWare Wireless Shields
+  // Start scanning for MyoWare Wireless Shields
   if (debugLogging) {
     Serial.print("Scanning for MyoWare Wireless Shields: ");
     Serial.println(myoWareServiceUUID);
   }
 
-  NimBLEScan *pBLEScan = NimBLEDevice::getScan(); // 创建新扫描对象
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);  // 设置扫描回调
-  pBLEScan->setActiveScan(true); // active scan uses more power, but gets results faster
-  pBLEScan->start(20, false); // scan for 10 seconds
+  NimBLEScan *pBLEScan = NimBLEDevice::getScan(); // Create new scan object
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);  // Set scan callback
+  pBLEScan->setActiveScan(true); // Active scan uses more power, but gets results faster
+  pBLEScan->start(20, false); // Scan for 20 seconds
 
   if (vecMyoWareShields.empty()) {
     Serial.println("No MyoWare Wireless Shields found!");
     while (1);
   }
 
-
-
-   for (auto& address : vecMyoWareShields) {
+  for (auto& address : vecMyoWareShields) {
     NimBLEClient* shield = NimBLEDevice::createClient();
     if (!shield->connect(address)) {
       Serial.print("Failed to connect to MyoWare Wireless Shield with address: ");
       Serial.println(address.toString().c_str());
-      // delete shield;
       continue;
     }
 
@@ -114,52 +160,23 @@ void setup() {
     }
 
     vecMyoWareClients.push_back(shield);
+
+    NimBLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
+    if (myoWareService) {
+      NimBLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
+      if (sensorCharacteristic && sensorCharacteristic->canNotify()) {
+        sensorCharacteristic->subscribe(true, notifyCallback);
+        if (debugLogging) {
+          Serial.println("Subscribed to notifications");
+        }
+      }
+    }
   }
 
   digitalWrite(myoware.getStatusLEDPin(), HIGH);  // Turn on the LED to indicate a connection
-
 }
 
 void loop() {
-  for (auto &shield : vecMyoWareClients) {
-    if (debugLogging) {
-      Serial.print("Updating ");
-      PrintPeripheralInfo(shield);
-    }
-
-    if (!shield->isConnected()) {
-      // output zero if the Wireless shield gets disconnected
-      // this ensures data capture can continue for the 
-      // other shields that are connected
-      Serial.print("0.0"); 
-      Serial.print("\t"); 
-      // delete shield;
-      continue;
-    }
-
-    NimBLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
-    if (!myoWareService) {
-      Serial.println("Failed finding MyoWare BLE Service!");
-      shield->disconnect();
-      // delete shield;
-      continue;
-    }
-
-    // get sensor data
-    NimBLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
-    if (!sensorCharacteristic) {
-      Serial.println("Failed to find characteristic!");
-      shield->disconnect();
-      // delete shield;
-      continue;
-    }
-
-    const double sensorValue = ReadBLEData(sensorCharacteristic);
-    Serial.print(sensorValue);
-
-    if (vecMyoWareShields.size() > 1)
-      Serial.print(","); 
-
-  }
-  Serial.println("");
+  timeClient.update(); // Update the time client periodically
+  // delay(1000); // Adjust the delay as needed
 }
