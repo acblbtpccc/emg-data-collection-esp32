@@ -15,7 +15,7 @@ const char* ssid = "boluo-wifi";
 const char* password = "54448449";
 const char* ntpEndPoint = "ntp1.aliyun.com";
 unsigned long writeInterval = 100; // each 100ms to send packet, 100 / 8 emg = 12.5ms, > 7.5ms(minimum ble connect interval)
-unsigned long readInterval = writeInterval / 4; // 4byte for Unix timestamp, for each data point, 2 byte for ms, 2 byte for value(0-4000), 4 data points
+unsigned long readInterval = writeInterval / 10; // 4byte for Unix timestamp, for each data point, 2 byte for ms, 2 byte for value(0-4000), 4 data points
 
 MyoWare::OutputType outputType = MyoWare::ENVELOPE; // select which output to print to serial
 
@@ -150,8 +150,8 @@ void setup() {
 void loop() {
   static unsigned long lastReadTime = 0;
   static unsigned long lastWriteTime = 0;
-  static uint32_t values[4] = {0};
-  static unsigned long times[4] = {0};
+  static uint32_t values[10] = {0};
+  static unsigned long times[10] = {0};
   static int index = 0;
 
   // wait for a BLE central
@@ -170,7 +170,7 @@ void loop() {
         // Get the sensor value and timestamp
         values[index] = myoware.readSensorOutput(outputType);
         times[index] = currentTime - bootTimeMillis;
-        index = (index + 1) % 4;
+        index = (index + 1) % 10;
         lastReadTime = currentTime;
       }
 
@@ -179,16 +179,16 @@ void loop() {
         uint8_t buffer[20];
         unsigned long ntpMillis = ntpTime * 1000 + (currentTime - bootTimeMillis);
 
-        buffer[0] = (ntpMillis >> 24) & 0xFF;
-        buffer[1] = (ntpMillis >> 16) & 0xFF;
-        buffer[2] = (ntpMillis >> 8) & 0xFF;
-        buffer[3] = ntpMillis & 0xFF;
+        // buffer[0] = (ntpMillis >> 24) & 0xFF;
+        // buffer[1] = (ntpMillis >> 16) & 0xFF;
+        // buffer[2] = (ntpMillis >> 8) & 0xFF;
+        // buffer[3] = ntpMillis & 0xFF;
         
-        for (int i = 0; i < 4; ++i) {
-          buffer[i * 4 + 4] = (times[i] >> 8) & 0xFF;  // 高8位的 time
-          buffer[i * 4 + 5] = times[i] & 0xFF;         // 低8位的 time
-          buffer[i * 4 + 6] = (values[i] >> 8) & 0xFF; // 高8位的 value
-          buffer[i * 4 + 7] = values[i] & 0xFF;        // 低8位的 value
+        for (int i = 0; i < 10; ++i) {
+          // buffer[i * 10 + 4] = (times[i] >> 8) & 0xFF;  // 高8位的 time
+          // buffer[i * 4 + 5] = times[i] & 0xFF;         // 低8位的 time
+          buffer[i * 2] = (values[i] >> 8) & 0xFF; // 高8位的 value
+          buffer[i * 2 + 1] = values[i] & 0xFF;        // 低8位的 value
         }
 
 
@@ -200,14 +200,14 @@ void loop() {
           Serial.println(getFormattedDateTime());
 
           Serial.println("Timestamp: ");
-          for (int i = 0; i < 4; ++i) {
+          for (int i = 0; i < 10; ++i) {
             Serial.print(times[i]);
             Serial.print(" ");
           }
           Serial.println();
 
           Serial.println("Data: ");
-          for (int i = 0; i < 4; ++i) {
+          for (int i = 0; i < 10; ++i) {
             Serial.print(values[i]);
             Serial.print(" ");
           }
@@ -215,7 +215,7 @@ void loop() {
           
           Serial.print("Hex: ");
           for (int i = 0; i < 20; ++i) {
-            if (i % 4 == 0) {
+            if (i % 2 == 0) {
               Serial.println(" ");
             }
             Serial.print(buffer[i], HEX);
