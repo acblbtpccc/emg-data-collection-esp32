@@ -13,10 +13,17 @@
 // Debug parameters
 bool debugLogging = true; // Set to true for verbose logging to serial
 String runningMode = "standalone"; 
+volatile int NeededClientNumbers = 8;
+
+SemaphoreHandle_t vecMyoWareShieldsSemaphore;
+volatile int ShieldListNumber = 0;
+SemaphoreHandle_t dataReceivedSemaphore;
+bool dataReceived[10] = {false};
 
 static unsigned long lastMemoryCheck = 0;
 static unsigned long peripheralInterval = 10;
 static unsigned long interval = 100; 
+
 
 bool gotConnectConfig = false; 
 bool enableconnectionParams = false;
@@ -35,7 +42,7 @@ const char *myoWareCharacteristicUUID = "F3A56EDF-8F1E-4533-93BF-5601B2E91308";
 StaticJsonDocument<512> doc;
 StaticJsonDocument<256> onNotifyCallBuffer;
 uint16_t serialPreValues[10] = {0};  // 2D array to store multiple sets of values
-bool dataReceived[10] = {false};
+
 
 
 // WiFi credentials
@@ -154,14 +161,19 @@ void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic,
           serialPreValues[i] = (pData[i * 2] << 8) | pData[i * 2 + 1];
       }
 
-      dataReceived[index] = true;
       bool allReceived = true;
+      if (xSemaphoreTake(dataReceivedSemaphore, portMAX_DELAY) == pdTRUE) {
+        dataReceived[index] = true;
+        xSemaphoreGive(dataReceivedSemaphore);
+      }
+      
       for (size_t i = 0; i < vecMyoWareShields.size(); ++i) {
         if (!dataReceived[i]) {
             allReceived = false;
             break;
         }
       }
+
       unsigned long allReceivedMillis = millis();
       
       if (allReceived) {
@@ -179,10 +191,14 @@ void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic,
             }
             Serial.println();
 
-        // 重置dataReceived数组以便接收下一批数据
-        for (size_t i = 0; i < vecMyoWareShields.size(); ++i) {
-            dataReceived[i] = false;
+        if (xSemaphoreTake(dataReceivedSemaphore, portMAX_DELAY) == pdTRUE) {
+          // 重置dataReceived数组以便接收下一批数据
+          for (size_t i = 0; i < vecMyoWareShields.size(); ++i) {
+              dataReceived[i] = false;
+          }
+          xSemaphoreGive(dataReceivedSemaphore);
         }
+        
         if (debugLogging) {
           // Serial.println("Reset data received record array!");
           // Serial.print("");
@@ -202,7 +218,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice* advertisedDevice) {
     if (advertisedDevice->haveServiceUUID() && advertisedDevice->isAdvertisingService(NimBLEUUID(myoWareServiceUUID))) {
       if (debugLogging) {
-        Serial.printf("Found MyoWare Wireless Shield: %s \n", advertisedDevice->toString().c_str());
+        // Serial.printf("Found MyoWare Wireless Shield: %s \n", advertisedDevice->toString().c_str());
       }
 
       // 检查设备地址是否已存在于向量中
@@ -217,13 +233,19 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 
       // 如果设备地址不存在，则添加到向量中
       if (!deviceExists) {
-        vecMyoWareShields.push_back(deviceAddress);
+        if (xSemaphoreTake(vecMyoWareShieldsSemaphore, portMAX_DELAY) == pdTRUE) {
+          vecMyoWareShields.push_back(deviceAddress);
+          ShieldListNumber++;
+          Serial.print("ShieldListNumber: ");
+          Serial.println(ShieldListNumber);
+          xSemaphoreGive(vecMyoWareShieldsSemaphore);
+        }
         if (debugLogging) {
           Serial.printf("Added Shield: %s \n", deviceAddress.toString().c_str());
         }
       } else {
         if (debugLogging) {
-          Serial.printf("Duplicate Shield found: %s \n", deviceAddress.toString().c_str());
+          // Serial.printf("Duplicate Shield found: %s \n", deviceAddress.toString().c_str());
         }
       }
     }
@@ -350,10 +372,13 @@ bool fetchConnectionParams() {
     // 提取并设置连接参数
     runningMode = connectConfigJsonDoc["runningMode"].as<String>();
     enableconnectionParams = connectConfigJsonDoc["enableconnectionParams"];
+    NeededClientNumbers = connectConfigJsonDoc["NeededClientNumbers"];
     Serial.print("runningMode: "); 
     Serial.println(runningMode);
     Serial.print("enableconnectionParams: "); 
     Serial.println(enableconnectionParams);
+    Serial.print("NeededClientNumbers: ");
+    Serial.println(NeededClientNumbers);
 
     // connectionParams struct 
     connectionParams.minInterval = connectConfigJsonDoc["minInterval"];
@@ -378,94 +403,95 @@ bool fetchConnectionParams() {
 
 
 void connectToShields() {
-    // 用于记录已经连接的设备地址的集合
-    // bool AllSuccess = True;
+    Serial.println("Start Connect to MyoWare Wireless Shields...");
+    // std::vector<NimBLEAddress> connectedAddresses;
+    while (vecMyoWareClients.size() < NeededClientNumbers) {
+      Serial.print("NeededClientNumbers: ");
+      Serial.println(NeededClientNumbers);
+      Serial.print("Current Client Number: ");
+      Serial.println(vecMyoWareClients.size());
 
-    // auto it = vecMyoWareShields.begin();
-    // while (it != vecMyoWareShields.end()) {
-    //     auto& address = *it;
-    //     // Your code here
-        
-    //     ++it;  // Move to the next element
-    // }
+        for (const auto& address : vecMyoWareShields) {
+          Serial.print("Current trying to connect address:");
+          Serial.println(address.toString().c_str());
 
-    int connectedNumber = 0;
-    std::vector<NimBLEAddress> connectedAddresses;
-    while (connectedNumber < 8) {
-      auto itShield = vecMyoWareShields.begin();
-      while (itShield != vecMyoWareShields.end()) {
-        auto& address = *itShield;
-      
-    // for (auto& address : vecMyoWareShields) {
-        // 检查设备是否已经连接
-        // bool CurSuccess = False;
-        auto it = std::find(connectedAddresses.begin(), connectedAddresses.end(), address);
-        if (it != connectedAddresses.end()) {
-          continue;
-        }
-            Serial.print(address.toString().c_str());
-            Serial.println(", Address is not connected!");
+          bool shieldConnected = false;
+          bool firstConnection = true;
+          auto it = vecMyoWareClients.begin();
 
-            NimBLEClient* shield = NimBLEDevice::createClient();  
-            if (enableconnectionParams) {
-                shield->setConnectionParams(connectionParams.minInterval, connectionParams.maxInterval, connectionParams.latency, connectionParams.timeout, connectionParams.scanInterval, connectionParams.scanWindow);
-            }
-            bool clientConnected = false;
-            // CurSuccess = clientConnected;
-            while(!clientConnected){
-              Serial.print(address.toString().c_str());
-              Serial.println(", Address is not connected! Tring to connect.");
-              clientConnected = shield->connect(address);
-              delay(500); 
-            }
-
-            // if (!clientConnected) {
-            //     Serial.print("Failed to connect to Shield with address: ");
-            //     Serial.println(address.toString().c_str());
-            //     NimBLEDevice::deleteClient(shield); 
-            //     delay(500);
-            //     continue;
-            // }
-            connectedNumber++;
-            vecMyoWareClients.push_back(shield);
-            if (debugLogging) {
-                Serial.print("Connected to ");
-                PrintPeripheralInfo(shield);
-            }
-
-        
-            
-        
-        NimBLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
-        if (myoWareService) {
-          // auto it = std::find(connectedAddresses.begin(), connectedAddresses.end(), client->getPeerAddress());
-          // if (it == connectedAddresses.end()) {
-          NimBLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
-          if (sensorCharacteristic && sensorCharacteristic->canNotify()) {
-            bool subscribed = false;
-            int triedTimes = 0;
-            while (!subscribed) {
-              // if (triedTimes == 5){
-              //   break;
-              // }
-              subscribed = sensorCharacteristic->subscribe(true, notifyCallback);
-              if (subscribed) {
-                  connectedAddresses.push_back(address); // 记录成功连接的设备地址
-                  Serial.println("Subscribed to notifications");
-              } else {
-                  Serial.println("Subscription failed, retrying...");
-                  // triedTimes++;
-                  delay(500); 
+          do {
+            if (!firstConnection){
+              for (const auto& client : vecMyoWareClients) {
+                if (client->getPeerAddress().equals(address)) {
+                  shieldConnected = true;
+                  break;
+                }
               }
-              
             }
-          }
-        }
-      ++itShield;
-      }
-        
+
+              if (!shieldConnected) {
+                Serial.print(address.toString().c_str());
+                Serial.println(", Address is not connected!");
+                
+                NimBLEClient* shield = NimBLEDevice::createClient();  
+                if (enableconnectionParams) {
+                    shield->setConnectionParams(connectionParams.minInterval, connectionParams.maxInterval, connectionParams.latency, connectionParams.timeout, connectionParams.scanInterval, connectionParams.scanWindow);
+                }
+
+                int shieldConnectedTriedTimes = 0;
+                while(!shieldConnected && shieldConnectedTriedTimes < 5) {
+                  Serial.print(address.toString().c_str());
+                  Serial.println("Tring to connect.");
+                  shieldConnected = shield->connect(address);
+                  shieldConnectedTriedTimes++;
+                  delay(200);
+                }
+
+                if (shieldConnectedTriedTimes >= 5) {
+                  Serial.println("Trials to connect to the shield exceed 5 times, give up connect.");
+                }
+
+                if (shieldConnected){     
+                  if (debugLogging) {
+                    Serial.print("Connected to ");
+                    PrintPeripheralInfo(shield);
+                  }
+                  vecMyoWareClients.push_back(shield);
+                  firstConnection = false;
+                  Serial.print("Current Client Number: ");
+                  Serial.println(vecMyoWareClients.size());
+                  
+
+                  NimBLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
+                  if (myoWareService) {
+                    NimBLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
+                    if (sensorCharacteristic && sensorCharacteristic->canNotify()) {
+                      bool subscribed = false;
+                      int shieldSubscribeTriedTimes = 0;
+                      while (!subscribed && shieldSubscribeTriedTimes < 5) {
+                        subscribed = sensorCharacteristic->subscribe(true, notifyCallback);
+                        if (subscribed) {
+                          if (debugLogging) {
+                            Serial.println("Subscribed to notifications");
+                          }
+                        } else {
+                            Serial.println("Subscription failed, retrying...");
+                            shieldSubscribeTriedTimes++;
+                            delay(100); 
+                        } 
+                      }
+                    }
+                  }
+                }
+              }
+            if (it != vecMyoWareClients.end()) {
+              ++it;
+            }
+            } while (!shieldConnected && it != vecMyoWareClients.end());
+        }        
     }
 }
+
 
 
 
@@ -508,6 +534,10 @@ void setup() {
   // Begin initialization
   NimBLEDevice::init("");  // Initialize BLE device
 
+  vecMyoWareShieldsSemaphore = xSemaphoreCreateMutex();
+  dataReceivedSemaphore = xSemaphoreCreateMutex();
+
+  
   if (debugLogging) {
     Serial.println("MyoWare BLE Central");
     Serial.println("-------------------");
@@ -523,6 +553,10 @@ void setup() {
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);  // Set scan callback
   pBLEScan->setActiveScan(true); // Active scan uses more power, but gets results faster
   pBLEScan->start(20, false); // Scan for 20 seconds
+  Serial.println("Scan done!");
+  Serial.print("Found ");
+  Serial.print(vecMyoWareShields.size());
+  Serial.println(" MyoWare Wireless Shields");
 
   if (vecMyoWareShields.empty()) {
     Serial.println("No MyoWare Wireless Shields found!");
@@ -530,51 +564,6 @@ void setup() {
   }
 
   connectToShields();
-  // for (auto& address : vecMyoWareShields) {
-  //   NimBLEClient* shield = NimBLEDevice::createClient();  
-  //   if (enableconnectionParams) {
-  //     shield->setConnectionParams(connectionParams.minInterval, connectionParams.maxInterval, connectionParams.latency, connectionParams.timeout, connectionParams.scanInterval, connectionParams.scanWindow);
-  //   }
-  
-  //   if (!shield->connect(address)) {
-  //     Serial.print("Failed to connect to Shield with address: ");
-  //     Serial.println(address.toString().c_str());
-  //     NimBLEDevice::deleteClient(shield); 
-  //     delay(1000);
-  //     continue;
-  //   }
-
-  //   if (debugLogging) {
-  //     Serial.print("Connected to ");
-  //     PrintPeripheralInfo(shield);
-  //   }
-
-  //   vecMyoWareClients.push_back(shield);
-
-  //   NimBLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
-  //   if (myoWareService) {
-  //       NimBLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
-  //       if (sensorCharacteristic && sensorCharacteristic->canNotify()) {
-  //           bool subscribed = false;
-  //           while (!subscribed) {
-  //               subscribed = sensorCharacteristic->subscribe(true, notifyCallback);
-  //               if (subscribed) {
-  //                   Serial.println("Subscribed to notifications");
-  //               } else {
-  //                   Serial.println("Subscription failed, retrying...");
-  //                   delay(500); // 等待一段时间后再尝试
-  //               }
-  //           }
-  //       }
-  //   }
-
-  //   // if (debugLogging) {
-  //   // if (millis() - lastMemoryCheck > 2000) { 
-  //   //     printMemoryUsage();
-  //   //     lastMemoryCheck = millis();
-  //   //   }
-  //   // }
-  // }
 
   digitalWrite(myoware.getStatusLEDPin(), HIGH);  // Turn on the LED to indicate a connection
 }
@@ -583,27 +572,6 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     connectToWiFi(); // Reconnect if WiFi is disconnected
   }
-  
-  // if (runningMode == "standalone") {
-  //   // Print the values in a combined format
-  //     for (size_t j = 0; j < 10; ++j) {
-  //         for (size_t i = 0; i < vecMyoWareShields.size(); ++i) {
-  //             Serial.print(values[i][j]);
-  //             if (i < vecMyoWareShields.size() - 1) {
-  //                 Serial.print(",");
-  //             }
-  //         }
-  //         Serial.println();
-  //     }
-  // }
-  // if (debugLogging) {
-  //  if (millis() - lastMemoryCheck > 2000) { 
-  //     Serial.println("Looping ");
-  //     printMemoryUsage();
-  //     lastMemoryCheck = millis();
-  //   }
-  // }
-  // delay(1000); // Adjust the delay as needed
 }
 
 // #include <NimBLEDevice.h>
