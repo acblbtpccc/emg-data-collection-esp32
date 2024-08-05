@@ -1,0 +1,143 @@
+#include <NimBLEDevice.h>
+#include <NimBLEUtils.h>
+#include <NimBLEServer.h>
+#include <NimBLEClient.h>
+#include <MyoWare.h>
+#include <vector>
+#include <ArduinoJson.h>
+
+// Debug parameters
+const bool debugLogging = false; // Set to true for verbose logging to serial
+
+std::vector<NimBLEAddress> vecMyoWareShields;
+std::vector<NimBLEClient*> vecMyoWareClients;
+
+// MyoWare class object
+MyoWare myoware;
+
+// UUIDs for the MyoWare service and characteristic
+const char *myoWareServiceUUID = "EC3AF789-2154-49F4-A9FC-BC6C88E9E930";
+const char *myoWareCharacteristicUUID = "F3A56EDF-8F1E-4533-93BF-5601B2E91308";
+
+// Function to read BLE data (stub for illustration)
+double ReadBLEData(BLERemoteCharacteristic* pRemoteCharacteristic) {
+  String value = pRemoteCharacteristic->readValue();  // Use String type
+  return value.toFloat();  // Convert String to float
+}
+
+// Function to print peripheral info (stub for illustration)
+void PrintPeripheralInfo(NimBLEClient* client) {
+  Serial.print("Peripheral: ");
+  Serial.println(client->getPeerAddress().toString().c_str());
+}
+
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice* advertisedDevice) {
+    if (advertisedDevice->haveServiceUUID() && advertisedDevice->isAdvertisingService(NimBLEUUID(myoWareServiceUUID))) {
+      if (debugLogging) {
+        Serial.printf("Found MyoWare Wireless Shield: %s \n", advertisedDevice->toString().c_str());
+      }
+
+      // Add device to the vector
+      vecMyoWareShields.push_back(advertisedDevice->getAddress());
+      if (debugLogging) {
+        Serial.printf("Found MyoWare Wireless Shield: %s \n", advertisedDevice->getAddress().toString().c_str());
+      }
+    }
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+
+  pinMode(myoware.getStatusLEDPin(), OUTPUT); // Initialize the built-in LED pin to indicate when a central is connected
+
+  // Begin initialization
+  NimBLEDevice::init("");  // Initialize BLE device
+
+  if (debugLogging) {
+    Serial.println("MyoWare BLE Central");
+    Serial.println("-------------------");
+  }
+
+  // Start scanning for MyoWare Wireless Shields
+  if (debugLogging) {
+    Serial.print("Scanning for MyoWare Wireless Shields: ");
+    Serial.println(myoWareServiceUUID);
+  }
+
+  NimBLEScan *pBLEScan = NimBLEDevice::getScan(); // Create new scan object
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);  // Set scan callback
+  pBLEScan->setActiveScan(true); // Active scan uses more power, but gets results faster
+  pBLEScan->start(20, false); // Scan for 20 seconds
+
+  if (vecMyoWareShields.empty()) {
+    Serial.println("No MyoWare Wireless Shields found!");
+    while (1);
+  }
+
+  for (auto& address : vecMyoWareShields) {
+    NimBLEClient* shield = NimBLEDevice::createClient();
+    if (!shield->connect(address)) {
+      Serial.print("Failed to connect to MyoWare Wireless Shield with address: ");
+      Serial.println(address.toString().c_str());
+      continue;
+    }
+
+    if (debugLogging) {
+      Serial.print("Connected to ");
+      PrintPeripheralInfo(shield);
+    }
+
+    vecMyoWareClients.push_back(shield);
+  }
+
+  digitalWrite(myoware.getStatusLEDPin(), HIGH);  // Turn on the LED to indicate a connection
+}
+
+void loop() {
+  StaticJsonDocument<1024> doc; // Create a JSON document
+  JsonArray peripherals = doc.createNestedArray("peripherals");
+
+  for (auto &shield : vecMyoWareClients) {
+    JsonObject peripheral = peripherals.createNestedObject();
+    String address = shield->getPeerAddress().toString().c_str();
+    peripheral["mac"] = address;
+
+    if (debugLogging) {
+      Serial.print("Updating ");
+      PrintPeripheralInfo(shield);
+    }
+
+    if (!shield->isConnected()) {
+      peripheral["value"] = 0.0; // Output zero if the Wireless shield gets disconnected
+      continue;
+    }
+
+    NimBLERemoteService* myoWareService = shield->getService(myoWareServiceUUID);
+    if (!myoWareService) {
+      Serial.println("Failed finding MyoWare BLE Service!");
+      shield->disconnect();
+      peripheral["value"] = 0.0;
+      continue;
+    }
+
+    // Get sensor data
+    NimBLERemoteCharacteristic* sensorCharacteristic = myoWareService->getCharacteristic(myoWareCharacteristicUUID);
+    if (!sensorCharacteristic) {
+      Serial.println("Failed to find characteristic!");
+      shield->disconnect();
+      peripheral["value"] = 0.0;
+      continue;
+    }
+
+    const double sensorValue = ReadBLEData(sensorCharacteristic);
+    peripheral["value"] = sensorValue;
+  }
+
+  // Serialize JSON document to Serial
+  serializeJson(doc, Serial);
+  Serial.println(""); // Print newline to separate JSON objects
+  delay(10); // Delay for readability and to reduce load
+}
