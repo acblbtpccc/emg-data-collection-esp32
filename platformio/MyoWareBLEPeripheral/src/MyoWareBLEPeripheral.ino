@@ -134,14 +134,14 @@ void setup() {
   BLE.advertise();
 
   if (debugLogging) {
-    Serial.println("Setup Complete!");
+    Serial.println("Setup Complete!!");
     Serial.print(BLE.address());
     Serial.print(" '");
     Serial.print(localName.c_str());
     Serial.print("' ");
     Serial.print(myoWareService.uuid());
     Serial.println();
-    Serial.print("Waiting to connect...");
+    Serial.print("Waiting to connect....");
   }
 
   digitalWrite(myoware.getStatusLEDPin(), LOW);
