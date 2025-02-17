@@ -32,6 +32,7 @@ myo_ware_characteristic_uuid = "f3a56edf-8f1e-4533-93bf-5601b2e91308"
 
 # JSON document for storing notifications
 on_notify_call_buffer = {}
+notify_buffer_lock = threading.Lock()  # Lock for accessing on_notify_call_buffer
 serial_pre_values = [0] * 10
 
 # WiFi credentials
@@ -92,20 +93,34 @@ async def notify_callback(sender, data):
 
     if running_mode == "up-to-host":
         # Add data to JSON document
-        peripheral = on_notify_call_buffer.setdefault(address, {})
-        values_array = peripheral.setdefault("values", [])
+        with notify_buffer_lock:
+            peripheral = on_notify_call_buffer.setdefault(address, {})
+            values_array = peripheral.setdefault("values", [])
 
-        for i in range(len(data) // 2):
-            value = int.from_bytes(data[i*2:i*2+2], byteorder='big')
-            adjusted_elapsed_millis = elapsed_millis - (len(data) // 2 - 1 - i) * peripheral_interval
-            timestamp = get_formatted_date_time(adjusted_elapsed_millis)
-            values_array.append({"timestamp": timestamp, "value": value})
+            for i in range(len(data) // 2):
+                value = int.from_bytes(data[i*2:i*2+2], byteorder='big')
+                adjusted_elapsed_millis = elapsed_millis - (len(data) // 2 - 1 - i) * peripheral_interval
+                timestamp = get_formatted_date_time(adjusted_elapsed_millis)
+                values_array.append({"timestamp": timestamp, "value": value})
 
-        # Serialize JSON document to stdout
-        print(json.dumps(on_notify_call_buffer))
+            # Emit the data to the front end
+            for entry in values_array:
+                def ack_callback():
+                    print(f"Data sent successfully: {entry}")
 
-        # Clear the document for the next notification
-        on_notify_call_buffer.clear()
+                def error_callback(e):
+                    print(f"Error sending data: {e}")
+
+                socketio.emit('emg_data', {
+                    'timestamp': entry['timestamp'],
+                    'mac': address,
+                    'value': entry['value']
+                }, callback=ack_callback, error_callback=error_callback)
+
+            print(json.dumps(on_notify_call_buffer))
+
+            # Clear the document for the next notification
+            on_notify_call_buffer.clear()
     elif running_mode == "standalone":
         address_index = next((i for i, a in enumerate(vec_myo_ware_shields) if a == address), None)
         if address_index is None:
@@ -218,8 +233,9 @@ async def connect_to_shields():
                 except Exception as e:
                     print(f"Error subscribing to notifications: {e}")
 
-async def main():
-    global ntp_time, boot_time_millis
+async def main(socketio_instance):
+    global ntp_time, boot_time_millis, socketio
+    socketio = socketio_instance  # Use the passed SocketIO instance
 
     # Fetch NTP time
     ntp_time = await get_ntp_time()
@@ -252,6 +268,3 @@ async def main():
 
     while True:
         await asyncio.sleep(10)
-
-if __name__ == "__main__":
-    asyncio.run(main())

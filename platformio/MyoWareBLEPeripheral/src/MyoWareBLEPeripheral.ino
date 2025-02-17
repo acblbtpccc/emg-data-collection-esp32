@@ -1,13 +1,13 @@
 #include <ArduinoBLE.h>
 #include <MyoWare.h>
-#include <WiFi.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-#include <TimeLib.h> 
+// #include <WiFi.h>
+// #include <NTPClient.h>
+// #include <WiFiUdp.h>
+// #include <TimeLib.h>
 
 // debug parameters
-const bool debugLogging = true;      // set to true for verbose logging
-const bool debugOutput = true;       // set to true to print output values to serial
+const bool debugLogging = false;      // set to true for verbose logging
+const bool debugOutput = false;       // set to true to print output values to serial
 
 // config parameters
 const String localName = "MyoWareSensor2";  // recommend making this unique for each Wireless shield
@@ -29,80 +29,80 @@ BLEService myoWareService(MyoWareBLE::uuidMyoWareService.c_str());
 BLECharacteristic sensorCharacteristic(MyoWareBLE::uuidMyoWareCharacteristic.c_str(), BLERead | BLENotify, 20);
 
 // NTP client setup
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, ntpEndPoint, 8 * 3600); // UTC+8 for Hong Kong
+// WiFiUDP ntpUDP;
+// NTPClient timeClient(ntpUDP, ntpEndPoint, 8 * 3600); // UTC+8 for Hong Kong
 unsigned long ntpTime;
 unsigned long bootTimeMillis;
 
-void connectToWiFi() {
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Scanning for available WiFi networks...");
-    int n = WiFi.scanNetworks();
-    if (n == 0) {
-      Serial.println("No networks found.");
-    } else {
-      Serial.printf("%d networks found:\n", n);
-      for (int i = 0; i < n; ++i) {
-        Serial.printf("%d: %s (%d) %s\n", i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), 
-                      (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "encrypted");
-      }
-    }
+// void connectToWiFi() {
+//   while (WiFi.status() != WL_CONNECTED) {
+//     Serial.println("Scanning for available WiFi networks...");
+//     int n = WiFi.scanNetworks();
+//     if (n == 0) {
+//       Serial.println("No networks found.");
+//     } else {
+//       Serial.printf("%d networks found:\n", n);
+//       for (int i = 0; i < n; ++i) {
+//         Serial.printf("%d: %s (%d) %s\n", i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i),
+//                       (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "open" : "encrypted");
+//       }
+//     }
 
-    Serial.println("Connecting to WiFi...");
-    WiFi.begin(ssid, password);
-    int wifi_attempts = 0;
-    while (WiFi.status() != WL_CONNECTED) {
-      // myoware.blinkStatusLED(200);  // Blink quickly during WiFi connection
-      delay(500);
-      Serial.print(".");
-      wifi_attempts++;
-      if (wifi_attempts > 20) {
-        Serial.println("\nFailed to connect to WiFi. Restarting wifi scan");
-        break;
-      }
-    }
-  }
-}
+//     Serial.println("Connecting to WiFi...");
+//     WiFi.begin(ssid, password);
+//     int wifi_attempts = 0;
+//     while (WiFi.status() != WL_CONNECTED) {
+//       // myoware.blinkStatusLED(200);  // Blink quickly during WiFi connection
+//       delay(500);
+//       Serial.print(".");
+//       wifi_attempts++;
+//       if (wifi_attempts > 20) {
+//         Serial.println("\nFailed to connect to WiFi. Restarting wifi scan");
+//         break;
+//       }
+//     }
+//   }
+// }
 
-String getFormattedDateTime() {
-  unsigned long currentMillis = millis();
-  unsigned long elapsedMillis = currentMillis - bootTimeMillis;
-  time_t rawTime = ntpTime + elapsedMillis / 1000;
-  unsigned long milliseconds = elapsedMillis % 1000;
+// String getFormattedDateTime() {
+//   unsigned long currentMillis = millis();
+//   unsigned long elapsedMillis = currentMillis - bootTimeMillis;
+//   time_t rawTime = ntpTime + elapsedMillis / 1000;
+//   unsigned long milliseconds = elapsedMillis % 1000;
 
-  // Format the date and time string with milliseconds
-  char timeOutputBuffer[30];
-  snprintf(timeOutputBuffer, sizeof(timeOutputBuffer), "%04d-%02d-%02d %02d:%02d:%02d.%03lu",
-           year(rawTime), month(rawTime), day(rawTime),
-           hour(rawTime), minute(rawTime), second(rawTime), milliseconds);
-  return String(timeOutputBuffer);
-}
+//   // Format the date and time string with milliseconds
+//   char timeOutputBuffer[30];
+//   snprintf(timeOutputBuffer, sizeof(timeOutputBuffer), "%04d-%02d-%02d %02d:%02d:%02d.%03lu",
+//            year(rawTime), month(rawTime), day(rawTime),
+//            hour(rawTime), minute(rawTime), second(rawTime), milliseconds);
+//   return String(timeOutputBuffer);
+// }
 
 void setup() {
   Serial.begin(115200);
   while (!Serial);
 
   // Connect to WiFi
-  connectToWiFi();
+  // connectToWiFi();
 
   // Start NTP client
-  timeClient.begin();
+  // timeClient.begin();
 
   // Wait until we get a valid NTP time
-  while (true) {
-    timeClient.update();
-    ntpTime = timeClient.getEpochTime();
-    Serial.printf("\nGet ntpTime: ");
-    Serial.println(ntpTime);
-    if (ntpTime >= 1609459200) { // 1609459200 corresponds to 2021-01-01 00:00:00
-      break;
-    }
-    Serial.println("Waiting for valid NTP time...");
-    delay(500);
-  }
-  Serial.println("NTP time obtained.");
-  Serial.println("Formatted time is: ");
-  Serial.println(getFormattedDateTime());
+  // while (true) {
+  //   timeClient.update();
+  //   ntpTime = timeClient.getEpochTime();
+  //   Serial.printf("\nGet ntpTime: ");
+  //   Serial.println(ntpTime);
+  //   if (ntpTime >= 1609459200) { // 1609459200 corresponds to 2021-01-01 00:00:00
+  //     break;
+  //   }
+  //   Serial.println("Waiting for valid NTP time...");
+  //   delay(500);
+  // }
+  // Serial.println("NTP time obtained.");
+  // Serial.println("Formatted time is: ");
+  // Serial.println(getFormattedDateTime());
 
   bootTimeMillis = millis(); // Record the millis() at the time we get the NTP time
 
@@ -183,7 +183,7 @@ void loop() {
         // buffer[1] = (ntpMillis >> 16) & 0xFF;
         // buffer[2] = (ntpMillis >> 8) & 0xFF;
         // buffer[3] = ntpMillis & 0xFF;
-        
+
         for (int i = 0; i < 10; ++i) {
           // buffer[i * 10 + 4] = (times[i] >> 8) & 0xFF;  // 高8位的 time
           // buffer[i * 4 + 5] = times[i] & 0xFF;         // 低8位的 time
@@ -194,36 +194,36 @@ void loop() {
 
         sensorCharacteristic.writeValue(buffer, 20);
 
-        if (debugOutput) {
-          Serial.println();
-          Serial.print("Sent data at: ");
-          Serial.println(getFormattedDateTime());
+        // if (debugOutput) {
+        //   Serial.println();
+        //   Serial.print("Sent data at: ");
+        //   Serial.println(getFormattedDateTime());
 
-          Serial.println("Timestamp: ");
-          for (int i = 0; i < 10; ++i) {
-            Serial.print(times[i]);
-            Serial.print(" ");
-          }
-          Serial.println();
+        //   Serial.println("Timestamp: ");
+        //   for (int i = 0; i < 10; ++i) {
+        //     Serial.print(times[i]);
+        //     Serial.print(" ");
+        //   }
+        //   Serial.println();
 
-          Serial.println("Data: ");
-          for (int i = 0; i < 10; ++i) {
-            Serial.print(values[i]);
-            Serial.print(" ");
-          }
-          Serial.println();
-          
-          Serial.print("Hex: ");
-          for (int i = 0; i < 20; ++i) {
-            if (i % 2 == 0) {
-              Serial.println(" ");
-            }
-            Serial.print(buffer[i], HEX);
-            Serial.print(" ");
-          }
-          Serial.println();
-        }
-        
+        //   Serial.println("Data: ");
+        //   for (int i = 0; i < 10; ++i) {
+        //     Serial.print(values[i]);
+        //     Serial.print(" ");
+        //   }
+        //   Serial.println();
+
+        //   Serial.print("Hex: ");
+        //   for (int i = 0; i < 20; ++i) {
+        //     if (i % 2 == 0) {
+        //       Serial.println(" ");
+        //     }
+        //     Serial.print(buffer[i], HEX);
+        //     Serial.print(" ");
+        //   }
+        //   Serial.println();
+        // }
+
         lastWriteTime = currentTime;
       }
     }
